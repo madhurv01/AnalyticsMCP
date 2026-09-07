@@ -1,0 +1,43 @@
+# --- secrets / env ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# --- node / next ---
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# --- docker / data volumes ---
+pgdata/
+miniodata/
+redisdata/
+
+# --- editor / os ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- misc / scratch ---
+scratch/
+scratch_*.csv
+*.local
