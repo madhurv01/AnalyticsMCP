@@ -1,3 +1,11 @@
+
+<img
+    src="CSVMcp.png"
+    alt="LocalDB Agent"
+    width="100%"
+  />
+
+
 <div align="center">
 
 # InsightForge
