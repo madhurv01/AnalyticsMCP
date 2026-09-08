@@ -10,42 +10,35 @@ const sevIcon: Record<string, any> = {
   info: Info,
 };
 const sevColor: Record<string, string> = {
-  critical: "text-red-600 bg-red-50 dark:bg-red-950/40",
-  warning: "text-amber-600 bg-amber-50 dark:bg-amber-950/40",
-  info: "text-slate-500 bg-slate-50 dark:bg-slate-800/40",
+  critical: "text-rose-500 bg-rose-500/10",
+  warning: "text-amber-500 bg-amber-500/10",
+  info: "text-slate-500 bg-slate-500/10 dark:text-slate-300",
 };
 
 export function InsightsPanel({ job }: { job: Job }) {
   const ins = job.insights_json;
-  const profile = job.profile_json;
   if (!ins) return null;
-
-  const kpis = [
-    ["Rows", profile?.row_count?.toLocaleString()],
-    ["Columns", profile?.col_count],
-    ["Missing", `${profile?.missing_cell_pct ?? 0}%`],
-    ["Duplicates", profile?.duplicate_rows ?? 0],
-  ];
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {kpis.map(([label, val], i) => (
-          <motion.div
-            key={label as string}
-            className="card p-4"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
-          >
-            <p className="text-xs muted">{label}</p>
-            <p className="mt-1 text-2xl font-bold text-brand">{val ?? "—"}</p>
-          </motion.div>
-        ))}
-      </div>
-
       <div className="card p-5">
-        <p className="text-sm">{ins.headline}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide muted">Headline</p>
+        <p className="mt-1.5 text-sm leading-relaxed">{ins.headline}</p>
+        {ins.counts && (
+          <div className="mt-3 flex gap-2 text-xs">
+            {ins.counts.critical > 0 && (
+              <span className="chip !bg-rose-500/15 !text-rose-500">
+                {ins.counts.critical} critical
+              </span>
+            )}
+            {ins.counts.warning > 0 && (
+              <span className="chip !bg-amber-500/15 !text-amber-500">
+                {ins.counts.warning} warning
+              </span>
+            )}
+            <span className="chip">{ins.counts.info} info</span>
+          </div>
+        )}
       </div>
 
       <div className="card p-5">
@@ -56,7 +49,7 @@ export function InsightsPanel({ job }: { job: Job }) {
             return (
               <motion.li
                 key={i}
-                className={`flex gap-3 rounded-lg p-3 text-sm ${sevColor[f.severity]}`}
+                className={`flex gap-3 rounded-xl p-3 text-sm ${sevColor[f.severity]}`}
                 initial={{ opacity: 0, x: -8 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.04 }}
@@ -81,10 +74,10 @@ export function InsightsPanel({ job }: { job: Job }) {
             {ins.recommendations.map((r: any, i: number) => (
               <li
                 key={i}
-                className="rounded-lg border p-3 text-sm"
+                className="rounded-xl border p-3 text-sm"
                 style={{ borderColor: "var(--border)" }}
               >
-                <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-brand-700">
+                <span className="rounded bg-brand-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-brand-500">
                   {r.priority}
                 </span>
                 <span className="ml-2 font-medium">{r.title}</span>

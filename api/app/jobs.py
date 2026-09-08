@@ -29,7 +29,26 @@ def execute_job(db: Session, job_id: uuid.UUID) -> None:
 
     try:
         raw = get_bytes(dataset.storage_key)
-        result = run_workflow(raw, dataset.filename, progress_cb, raw_rows_cap=settings.raw_rows_cap)
+
+        # Feature 3: diff this run against the last successful run of a same-named file.
+        prior = (
+            db.query(AnalysisJob)
+            .join(Dataset, AnalysisJob.dataset_id == Dataset.id)
+            .filter(
+                AnalysisJob.user_id == job.user_id,
+                AnalysisJob.status == "succeeded",
+                AnalysisJob.id != job.id,
+                Dataset.filename == dataset.filename,
+            )
+            .order_by(AnalysisJob.created_at.desc())
+            .first()
+        )
+        prior_fp = (prior.profile_json or {}).get("schema_fingerprint") if prior else None
+
+        result = run_workflow(
+            raw, dataset.filename, progress_cb,
+            raw_rows_cap=settings.raw_rows_cap, prior_fingerprint=prior_fp,
+        )
 
         report_key = f"users/{job.user_id}/reports/{job.id}.xlsx"
         put_bytes(
@@ -39,7 +58,13 @@ def execute_job(db: Session, job_id: uuid.UUID) -> None:
         )
 
         job.profile_json = result["profile"]
-        job.insights_json = {**result["insights"], "analysis": result["analysis"]}
+        job.insights_json = {
+            **result["insights"],
+            "quality": result["quality"],
+            "drivers": result["drivers"],
+            "drift": result["drift"],
+            "analysis": result["analysis"],
+        }
         job.status = "succeeded"
         job.progress = 100
         job.step = "final_export"

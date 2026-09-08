@@ -1,5 +1,6 @@
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// Empty = same origin. The web server proxies /api and /mcp to the API container
+// (see next.config.mjs), so the session cookie is first-party.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 export interface User {
   id: string;

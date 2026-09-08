@@ -35,7 +35,7 @@ def test_run_workflow_end_to_end():
     steps_seen = []
     result = run_workflow(_sample_csv(), "orders.csv", lambda s, p: steps_seen.append(s))
 
-    assert len(steps_seen) == 12
+    assert len(steps_seen) == 15
     assert result["row_count"] == 500
     assert result["profile"]["role_counts"].get("numeric", 0) >= 3
 
@@ -48,4 +48,12 @@ def test_run_workflow_end_to_end():
     assert any("outlier" in f["title"].lower() for f in result["insights"]["findings"])
 
     assert result["xlsx_bytes"][:2] == b"PK"  # valid xlsx (zip) header
-    assert len(result["sheet_names"]) == 9
+    assert len(result["sheet_names"]) == 12
+
+    # feature 1: quality scorecard
+    assert 0 <= result["quality"]["overall"] <= 100
+    assert result["quality"]["grade"] in {"A", "B", "C", "D", "E", "F"}
+    # feature 2: driver analysis picks up the injected revenue signal
+    assert result["drivers"]["targets"]
+    # feature 3: first run establishes a baseline
+    assert result["drift"]["status"] == "baseline"

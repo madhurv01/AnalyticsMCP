@@ -10,7 +10,8 @@ def _sev(x: str) -> int:
 
 
 def generate(profile: dict, summary: list[dict], corr: dict, rels: list[dict],
-             iqr: list[dict], mv: dict) -> dict:
+             iqr: list[dict], mv: dict, quality: dict | None = None,
+             drift: dict | None = None, drivers: dict | None = None) -> dict:
     findings: list[dict] = []
     recs: list[dict] = []
     n = profile["row_count"]
@@ -97,6 +98,54 @@ def generate(profile: dict, summary: list[dict], corr: dict, rels: list[dict],
                      "detail": "Inspect the IsolationForest-flagged rows for data-entry errors or genuine rare events.",
                      "priority": "medium"})
 
+    # --- schema drift (feature 3) ---
+    if drift and drift.get("status") == "compared" and drift.get("severity") != "info":
+        findings.append({
+            "category": "schema_drift", "severity": drift["severity"],
+            "title": "Schema changed since the last run",
+            "evidence": drift["summary"],
+        })
+        if drift.get("removed"):
+            recs.append({"title": "Investigate removed columns",
+                         "detail": f"These columns disappeared: {', '.join(drift['removed'])}. "
+                                   "Downstream reports and joins may break.",
+                         "priority": "high"})
+        if drift.get("role_changes"):
+            rc = drift["role_changes"][0]
+            recs.append({"title": f"Column '{rc['column']}' changed type",
+                         "detail": f"Was {rc['from']}, now {rc['to']} — check the upstream export.",
+                         "priority": "high"})
+
+    # --- driver analysis (feature 2) ---
+    for tgt in (drivers or {}).get("targets", []):
+        top = tgt["drivers"][0] if tgt["drivers"] else None
+        if top:
+            findings.append({
+                "category": "driver", "severity": "info",
+                "title": f"Main driver of '{tgt['target']}' is '{top['feature']}'",
+                "evidence": (f"Shallow decision tree ({tgt['fit_metric']['name']}="
+                             f"{tgt['fit_metric']['value']}); importance {top['importance']}."),
+            })
+        big = next((s for s in tgt["segments"] if abs(s.get("lift_pct") or 0) >= 25), None)
+        if big:
+            recs.append({
+                "title": f"Segment '{big['column']} = {big['value']}' stands out on '{tgt['target']}'",
+                "detail": f"{big['lift_pct']:+.0f}% vs. the overall average (n={big['n']}). "
+                          "Worth a targeted deep-dive.",
+                "priority": "medium",
+            })
+
+    # --- quality scorecard (feature 1) ---
+    if quality:
+        sev = ("critical" if quality["overall"] < 60 else
+               "warning" if quality["overall"] < 80 else "info")
+        findings.append({
+            "category": "data_quality", "severity": sev,
+            "title": f"Data quality score: {quality['overall']}/100 (grade {quality['grade']})",
+            "evidence": "; ".join(i["detail"] for i in quality["issues"][:2]) or
+                        "All quality dimensions are strong.",
+        })
+
     if not findings:
         findings.append({"category": "data_quality", "severity": "info",
                          "title": "No material data-quality issues detected",
@@ -106,7 +155,7 @@ def generate(profile: dict, summary: list[dict], corr: dict, rels: list[dict],
     order = {"high": 3, "medium": 2, "low": 1}
     recs.sort(key=lambda r: order[r["priority"]], reverse=True)
 
-    headline = _headline(profile, findings)
+    headline = _headline(profile, findings, quality, drift)
     return {
         "headline": headline,
         "findings": findings,
@@ -119,13 +168,18 @@ def generate(profile: dict, summary: list[dict], corr: dict, rels: list[dict],
     }
 
 
-def _headline(profile: dict, findings: list[dict]) -> str:
+def _headline(profile: dict, findings: list[dict], quality: dict | None = None,
+              drift: dict | None = None) -> str:
     crit = sum(1 for f in findings if f["severity"] == "critical")
     warn = sum(1 for f in findings if f["severity"] == "warning")
+    grade = f" Quality grade {quality['grade']} ({quality['overall']}/100)." if quality else ""
+    drift_bit = ""
+    if drift and drift.get("status") == "compared" and drift.get("severity") != "info":
+        drift_bit = f" {drift['summary']}"
     base = (f"{profile['row_count']:,} rows × {profile['col_count']} columns "
-            f"({profile['missing_cell_pct']}% missing).")
+            f"({profile['missing_cell_pct']}% missing).{grade}")
     if crit:
-        return base + f" {crit} critical data-quality issue(s) need attention before analysis."
+        return base + f" {crit} critical issue(s) to fix before analysis." + drift_bit
     if warn:
-        return base + f" {warn} data-quality warning(s) to review."
-    return base + " Dataset looks healthy and ready for analysis."
+        return base + f" {warn} warning(s) to review." + drift_bit
+    return base + " Dataset looks healthy and ready for analysis." + drift_bit

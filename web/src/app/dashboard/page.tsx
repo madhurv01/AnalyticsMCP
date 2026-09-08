@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, FileSpreadsheet, Trash2, Play } from "lucide-react";
+import { Download, FileSpreadsheet } from "lucide-react";
 import { api, type Dataset, type Job, type Report, type User } from "@/lib/api";
 import { TopBar } from "@/components/top-bar";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { WorkflowAnimation } from "@/components/workflow-animation";
 import { InsightsPanel } from "@/components/insights-panel";
+import { DriverPanel } from "@/components/driver-panel";
+import { RightRail } from "@/components/right-rail";
 import { bytes } from "@/lib/utils";
 
 export default function Dashboard() {
@@ -50,15 +52,24 @@ export default function Dashboard() {
     }, 900);
   }
 
+  async function track(j: Job) {
+    if (j.status === "succeeded" || j.status === "failed") {
+      // inline jobs come back done — fetch the full detail (profile + insights)
+      setJob(await api.job(j.id));
+      refresh();
+    } else {
+      setJob(j);
+      watch(j.id);
+    }
+  }
+
   async function onFile(f: File) {
     setError(null);
     setBusy(true);
     try {
       const ds = await api.upload(f);
       await refresh();
-      const j = await api.analyze(ds.id);
-      setJob(j);
-      if (j.status !== "succeeded") watch(j.id);
+      await track(await api.analyze(ds.id));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -69,28 +80,32 @@ export default function Dashboard() {
   async function runAnalysis(id: string) {
     setError(null);
     try {
-      const j = await api.analyze(id);
-      setJob(j);
-      if (j.status !== "succeeded") watch(j.id);
-      else refresh();
+      await track(await api.analyze(id));
     } catch (e: any) {
       setError(e.message);
     }
   }
 
   const reportForJob = job && reports.find((r) => r.job_id === job.id);
+  const drivers = job?.insights_json?.drivers;
 
   return (
     <div className="min-h-screen">
       <TopBar user={user} />
-      <main className="mx-auto grid max-w-6xl gap-6 px-5 py-8 lg:grid-cols-[1fr_320px]">
+      <main className="mx-auto grid max-w-7xl gap-6 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="space-y-6">
           <UploadDropzone onFile={onFile} busy={busy} />
 
           {error && (
-            <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40">
-              {error}
-            </p>
+            <p className="rounded-xl bg-rose-500/10 p-3 text-sm text-rose-500">{error}</p>
+          )}
+
+          {!job && (
+            <div className="card p-8 text-center">
+              <p className="text-sm muted">
+                Upload a CSV to start — or pick one from your history on the right.
+              </p>
+            </div>
           )}
 
           <AnimatePresence mode="wait">
@@ -107,9 +122,11 @@ export default function Dashboard() {
                 ) : (
                   <>
                     {reportForJob && (
-                      <div className="card flex items-center justify-between p-5">
+                      <div className="card glow-ring flex items-center justify-between p-5">
                         <div className="flex items-center gap-3">
-                          <FileSpreadsheet className="text-emerald-500" />
+                          <span className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-500/15 text-emerald-500">
+                            <FileSpreadsheet size={20} />
+                          </span>
                           <div>
                             <p className="font-medium">Excel report ready</p>
                             <p className="text-sm muted">
@@ -118,15 +135,13 @@ export default function Dashboard() {
                             </p>
                           </div>
                         </div>
-                        <a
-                          className="btn-primary"
-                          href={api.downloadUrl(reportForJob.id)}
-                        >
+                        <a className="btn-primary" href={api.downloadUrl(reportForJob.id)}>
                           <Download size={16} /> Download
                         </a>
                       </div>
                     )}
                     <InsightsPanel job={job} />
+                    {drivers && <DriverPanel drivers={drivers} />}
                   </>
                 )}
               </motion.div>
@@ -134,77 +149,13 @@ export default function Dashboard() {
           </AnimatePresence>
         </div>
 
-        <aside className="space-y-6">
-          <section className="card p-4">
-            <h3 className="mb-3 text-sm font-semibold">Datasets</h3>
-            <ul className="space-y-2">
-              {datasets.length === 0 && (
-                <li className="text-sm muted">No uploads yet.</li>
-              )}
-              {datasets.map((d) => (
-                <li
-                  key={d.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border p-2.5 text-sm"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{d.filename}</p>
-                    <p className="muted">
-                      {bytes(d.size_bytes)}
-                      {d.row_count ? ` · ${d.row_count.toLocaleString()} rows` : ""}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <button
-                      className="btn-ghost !p-1.5"
-                      onClick={() => runAnalysis(d.id)}
-                      title="Analyze"
-                    >
-                      <Play size={14} />
-                    </button>
-                    <button
-                      className="btn-ghost !p-1.5"
-                      onClick={async () => {
-                        await api.deleteDataset(d.id);
-                        refresh();
-                      }}
-                      title="Delete"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="card p-4">
-            <h3 className="mb-3 text-sm font-semibold">Report history</h3>
-            <ul className="space-y-2">
-              {reports.length === 0 && (
-                <li className="text-sm muted">No reports yet.</li>
-              )}
-              {reports.map((r) => (
-                <li
-                  key={r.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border p-2.5 text-sm"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  <span className="muted">
-                    {new Date(r.created_at).toLocaleString()}
-                  </span>
-                  <a
-                    className="btn-ghost !p-1.5"
-                    href={api.downloadUrl(r.id)}
-                    title="Download"
-                  >
-                    <Download size={14} />
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </aside>
+        <RightRail
+          job={job}
+          datasets={datasets}
+          reports={reports}
+          onAnalyze={runAnalysis}
+          onRefresh={refresh}
+        />
       </main>
     </div>
   );

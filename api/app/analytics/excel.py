@@ -13,7 +13,8 @@ GROUND = "#F8FAFC"
 ACCENT = "#0EA5E9"
 
 SHEETS = [
-    "Executive Dashboard", "Dataset Profile", "Summary Statistics", "Correlation Matrix",
+    "Executive Dashboard", "Quality Scorecard", "Driver Analysis", "Schema Drift",
+    "Dataset Profile", "Summary Statistics", "Correlation Matrix",
     "Relationship Analysis", "Outlier Detection", "AI Insights", "Charts", "Raw Data",
 ]
 
@@ -45,6 +46,9 @@ def build_report(df: pd.DataFrame, ctx: dict, raw_rows_cap: int = 5000) -> tuple
     f = _fmts(wb)
 
     _exec_dashboard(wb, f, ctx)
+    _quality_sheet(wb, f, ctx)
+    _drivers_sheet(wb, f, ctx)
+    _drift_sheet(wb, f, ctx)
     _profile_sheet(wb, f, ctx)
     _summary_sheet(wb, f, ctx)
     _corr_sheet(wb, f, ctx)
@@ -72,10 +76,12 @@ def _exec_dashboard(wb, f, ctx):
     _header(ws, f, "Executive Dashboard", ctx["dataset_name"])
     ws.set_column("B:G", 18)
 
+    q = ctx.get("quality", {})
     kpis = [
         ("Rows", f"{p['row_count']:,}"), ("Columns", p["col_count"]),
-        ("Cells", f"{p['cell_count']:,}"), ("Missing %", f"{p['missing_cell_pct']}%"),
-        ("Numeric cols", p["role_counts"].get("numeric", 0)),
+        ("Missing %", f"{p['missing_cell_pct']}%"),
+        ("Quality score", f"{q.get('overall', '—')}"),
+        ("Grade", q.get("grade", "—")),
         ("Outlier rows", ctx["mv_outliers"].get("flagged_count", 0)),
     ]
     for i, (label, val) in enumerate(kpis):
@@ -104,6 +110,124 @@ def _exec_dashboard(wb, f, ctx):
     chart.set_title({"name": "Column type mix"})
     chart.set_legend({"none": True})
     ws.insert_chart("B18", chart, {"x_scale": 1.3, "y_scale": 1.1})
+
+
+def _quality_sheet(wb, f, ctx):
+    ws = wb.add_worksheet("Quality Scorecard")
+    q = ctx.get("quality")
+    _header(ws, f, "Data Quality Scorecard")
+    if not q:
+        ws.write("B5", "Not computed.", f["subtitle"])
+        return
+    ws.set_column("B:B", 22)
+    ws.set_column("C:C", 12)
+    ws.set_column("D:D", 70)
+
+    big = wb.add_format({"bold": True, "font_size": 40, "font_color": BRAND, "align": "center"})
+    grade_fmt = wb.add_format({"bold": True, "font_size": 22, "font_color": INK, "align": "center"})
+    ws.merge_range("B5:B7", q["overall"], big)
+    ws.merge_range("C5:C7", f"grade {q['grade']}", grade_fmt)
+
+    ws.write("B9", "Dimension", f["h"])
+    ws.write("C9", "Score", f["h"])
+    ws.write("D9", "Weight", f["h"])
+    for i, sub in enumerate(q["subscores"], start=9):
+        ws.write(i, 1, sub["label"], f["cell"])
+        ws.write_number(i, 2, sub["score"], f["num"])
+        ws.write_number(i, 3, sub["weight"], f["pct"])
+    last = 8 + len(q["subscores"])
+    ws.conditional_format(9, 2, last, 2, {
+        "type": "3_color_scale", "min_color": "#DC2626", "mid_color": "#FBBF24",
+        "max_color": "#16A34A", "min_value": 40, "mid_value": 70, "max_value": 100,
+        "min_type": "num", "mid_type": "num", "max_type": "num",
+    })
+
+    ws.write(last + 2, 1, "What's dragging the score down", f["h"])
+    for i, issue in enumerate(q["issues"], start=last + 3):
+        ws.write(i, 1, f"{issue['dimension']} ({issue['score']})", f["cell"])
+        ws.merge_range(i, 2, i, 3, issue["detail"], f["wrap"])
+
+
+def _drivers_sheet(wb, f, ctx):
+    ws = wb.add_worksheet("Driver Analysis")
+    d = ctx.get("drivers", {})
+    _header(ws, f, "Driver Analysis", "what moves the key metrics")
+    ws.set_column("B:B", 26)
+    ws.set_column("C:F", 16)
+    ws.set_column("G:G", 50)
+    row = 4
+    targets = d.get("targets", [])
+    if not targets:
+        ws.write(row, 1, d.get("note", "No suitable target column found."), f["subtitle"])
+        return
+    for tgt in targets:
+        ws.write(row, 1, f"Target: {tgt['target']}  ({tgt['target_kind']})", f["h"])
+        ws.write(row, 2, f"{tgt['fit_metric']['name']} = {tgt['fit_metric']['value']}", f["cell"])
+        row += 1
+        ws.write(row, 1, "Top drivers", f["h"])
+        ws.write(row, 2, "Importance", f["h"])
+        row += 1
+        for drv in tgt["drivers"]:
+            ws.write(row, 1, drv["feature"], f["cell"])
+            ws.write_number(row, 2, drv["importance"], f["num"])
+            row += 1
+        if tgt["drivers"]:
+            ws.conditional_format(row - len(tgt["drivers"]), 2, row - 1, 2,
+                                  {"type": "data_bar", "bar_color": BRAND})
+        row += 1
+        ws.write(row, 1, "Decision rules", f["h"])
+        ws.write(row, 2, "Effect", f["h"])
+        ws.write(row, 3, "Support", f["h"])
+        row += 1
+        for rule in tgt["rules"]:
+            ws.write(row, 1, rule["condition"], f["wrap"])
+            if tgt["target_kind"] == "numeric":
+                ws.write(row, 2, f"mean = {rule['mean']}", f["cell"])
+            else:
+                ws.write(row, 2, f"{rule['outcome']} ({rule['confidence']:.0%})", f["cell"])
+            ws.write_number(row, 3, rule["support"], f["cell"])
+            row += 1
+        row += 1
+        ws.write(row, 1, "Segment", f["h"])
+        ws.write(row, 2, "Metric", f["h"])
+        ws.write(row, 3, "Lift %", f["h"])
+        ws.write(row, 4, "n", f["h"])
+        row += 1
+        for seg in tgt["segments"]:
+            ws.write(row, 1, f"{seg['column']} = {seg['value']}", f["cell"])
+            ws.write_number(row, 2, seg["metric"], f["num"])
+            ws.write_number(row, 3, (seg["lift_pct"] or 0) / 100, f["pct"])
+            ws.write_number(row, 4, seg["n"], f["cell"])
+            row += 1
+        row += 2
+
+
+def _drift_sheet(wb, f, ctx):
+    ws = wb.add_worksheet("Schema Drift")
+    dr = ctx.get("drift", {})
+    _header(ws, f, "Schema Drift", "vs. the previous analysis of this file")
+    ws.set_column("B:B", 26)
+    ws.set_column("C:D", 24)
+    ws.merge_range("B5:D6", dr.get("summary", "No comparison available."), f["wrap"])
+    if dr.get("status") != "compared":
+        return
+    row = 8
+    ws.write(row, 1, "Change type", f["h"])
+    ws.write(row, 2, "Detail", f["h"])
+    row += 1
+    for col in dr.get("added", []):
+        ws.write(row, 1, "Column added", f["cell"]); ws.write(row, 2, col, f["cell"]); row += 1
+    for col in dr.get("removed", []):
+        ws.write(row, 1, "Column removed", f["sev_crit"]); ws.write(row, 2, col, f["cell"]); row += 1
+    for rc in dr.get("role_changes", []):
+        ws.write(row, 1, "Type change", f["sev_warn"])
+        ws.write(row, 2, f"{rc['column']}: {rc['from']} → {rc['to']}", f["cell"]); row += 1
+    for ns in dr.get("null_spikes", []):
+        ws.write(row, 1, "Null-rate spike", f["sev_warn"])
+        ws.write(row, 2, f"{ns['column']}: {ns['from']}% → {ns['to']}%", f["cell"]); row += 1
+    if dr.get("row_delta_pct") is not None:
+        ws.write(row, 1, "Row count", f["cell"])
+        ws.write(row, 2, f"{dr['row_delta']:+,} rows ({dr['row_delta_pct']:+.1f}%)", f["cell"])
 
 
 def _profile_sheet(wb, f, ctx):

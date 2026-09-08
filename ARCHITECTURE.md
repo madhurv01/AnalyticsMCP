@@ -275,11 +275,16 @@ Memorystore + GCS + Secret Manager.
 
 ## 11. Implemented vs. planned
 
-**Implemented in this MVP:** Google OAuth + session cookies, upload → storage, sync + Celery
-analysis, real pandas/scipy/sklearn workflow (steps 1–12), deterministic insights, 9-sheet
-XlsxWriter report, dataset/job/report history, presigned downloads, Redis rate limiting,
-MCP server with 7 tools, Next.js dashboard with animated workflow + dark/light + drag-drop.
+**Implemented in this MVP:** Google OAuth + first-party session cookies (web proxies
+`/api` + `/mcp` to the API), upload → storage, sync + Celery analysis, real
+pandas/scipy/sklearn workflow (15 steps), deterministic insights, **Data Quality
+Scorecard** (`analytics/quality.py`), **Driver Analysis** (`analytics/drivers.py` —
+decision-tree drivers + rules + segment lift), **Schema Drift Detection**
+(`analytics/drift.py` — fingerprint diff vs. the previous run of a same-named file),
+12-sheet XlsxWriter report, dataset/job/report history, presigned downloads, Redis
+rate limiting, MCP server with 7 tools, Next.js dashboard with animated workflow,
+right-rail analysis panel + quality gauge, monogram avatar, dark/light + drag-drop.
 
-**Planned (specified, not built):** Time-Series / Segment / Pivot Excel sheets, per-user MCP
+**Planned (specified, not built):** Time-Series / Pivot Excel sheets, per-user MCP
 API keys, Alembic migrations, chart image previews in-app (currently spec-only chart
 metadata + Excel-native charts), Terraform for AWS/GCP, OTel wiring.

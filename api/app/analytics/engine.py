@@ -6,7 +6,18 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from app.analytics import WORKFLOW_STEPS, excel, insights, outliers, profiling, relationships, stats
+from app.analytics import (
+    WORKFLOW_STEPS,
+    drift,
+    drivers,
+    excel,
+    insights,
+    outliers,
+    profiling,
+    quality,
+    relationships,
+    stats,
+)
 
 ProgressCb = Callable[[str, int], None]
 
@@ -23,7 +34,7 @@ def _read_csv(raw: bytes) -> pd.DataFrame:
 
 
 def run_workflow(raw: bytes, dataset_name: str, progress_cb: ProgressCb,
-                 raw_rows_cap: int = 5000) -> dict:
+                 raw_rows_cap: int = 5000, prior_fingerprint: dict | None = None) -> dict:
     steps = {name: int((i + 1) / len(WORKFLOW_STEPS) * 100) for i, name in enumerate(WORKFLOW_STEPS)}
 
     progress_cb("dataset_loading", steps["dataset_loading"])
@@ -32,6 +43,7 @@ def run_workflow(raw: bytes, dataset_name: str, progress_cb: ProgressCb,
 
     progress_cb("schema_detection", steps["schema_detection"])
     roles = {col: profiling.infer_role(col, df[col]) for col in df.columns}
+    raw_df = df.copy(deep=True)  # kept for validity/consistency scoring
 
     progress_cb("data_cleaning", steps["data_cleaning"])
     df = profiling.clean_frame(df, roles)
@@ -54,11 +66,23 @@ def run_workflow(raw: bytes, dataset_name: str, progress_cb: ProgressCb,
     iqr = outliers.iqr_outliers(df, numeric_cols)
     mv = outliers.multivariate_outliers(df, numeric_cols)
 
+    progress_cb("driver_analysis", steps["driver_analysis"])
+    driver_result = drivers.analyze(df, roles)
+
+    progress_cb("quality_scoring", steps["quality_scoring"])
+    quality_result = quality.score(raw_df, roles, profile, iqr)
+
+    progress_cb("schema_drift_check", steps["schema_drift_check"])
+    fp = drift.fingerprint(profile)
+    profile["schema_fingerprint"] = fp
+    drift_result = drift.compare(prior_fingerprint, fp)
+
     progress_cb("chart_generation", steps["chart_generation"])
     chart_specs = _chart_specs(profile, corr)
 
     progress_cb("insight_extraction", steps["insight_extraction"])
-    ins = insights.generate(profile, summary, corr, rels, iqr, mv)
+    ins = insights.generate(profile, summary, corr, rels, iqr, mv,
+                            quality=quality_result, drift=drift_result, drivers=driver_result)
 
     ctx = {
         "dataset_name": dataset_name,
@@ -70,6 +94,9 @@ def run_workflow(raw: bytes, dataset_name: str, progress_cb: ProgressCb,
         "mv_outliers": mv,
         "insights": ins,
         "chart_specs": chart_specs,
+        "quality": quality_result,
+        "drivers": driver_result,
+        "drift": drift_result,
     }
 
     progress_cb("excel_report_creation", steps["excel_report_creation"])
@@ -79,6 +106,9 @@ def run_workflow(raw: bytes, dataset_name: str, progress_cb: ProgressCb,
     return {
         "profile": profile,
         "insights": ins,
+        "quality": quality_result,
+        "drivers": driver_result,
+        "drift": drift_result,
         "analysis": {
             "summary": summary,
             "correlation": corr,

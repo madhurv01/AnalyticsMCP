@@ -90,14 +90,17 @@ the file you uploaded.
 | **Anomaly detection** | Per-numeric IQR fences (1.5×) **and** a multivariate `IsolationForest` that flags whole rows that don't fit. |
 | **Chart generation** | Chooses appropriate visualisations per column type (histograms, box plots, bar charts, scatter of the top-correlated pair, correlation heatmap) and embeds them as **native Excel charts**. |
 | **Deterministic insights** | Rule-based findings, each carrying its evidence and a severity (`critical / warning / info`), plus prioritised recommendations. Fully explainable — no LLM, no hallucination. |
-| **Premium Excel export** | 9 professionally formatted sheets: KPI cards, conditional formatting, data bars, 3-colour scales, frozen panes, autofilters, embedded charts, branded palette. |
+| **Data Quality Scorecard** | A single 0–100 score + letter grade, built from six weighted dimensions (completeness, uniqueness, validity, consistency, outlier cleanliness, type-inference confidence) with the specific issues dragging each one down. |
+| **Driver Analysis** | Auto-picks the most interesting target column(s), then explains what moves them: shallow decision-tree feature importances, human-readable split rules, and categorical **segment lift** ("Enterprise customers: +232% on margin"). |
+| **Schema Drift Detection** | Fingerprints every analysed schema. Re-analyse a file with the same name and the run is diffed against the last one — added/removed columns, type changes, null-rate spikes, row-count deltas — with a severity. Turns a one-off tool into a monitoring tool. |
+| **Premium Excel export** | 12 professionally formatted sheets: KPI cards, conditional formatting, data bars, 3-colour scales, frozen panes, autofilters, embedded charts, branded palette. |
 | **History & report management** | Every upload, job and report is persisted per user and listed in the dashboard; reports download via short-lived presigned URLs. |
 | **Background processing** | Files under 5 MB analyse inline in the request; larger files are handed to a Celery worker and the UI polls live progress. |
 | **MCP server** | The same analytics capability exposed as 7 MCP tools over Streamable HTTP, authenticated with the user's session token, scoped to that user's data. |
 
 ---
 
-## The analytics workflow (12 steps)
+## The analytics workflow (15 steps)
 
 When a job runs, the engine emits progress after each step so the UI can animate
 it. These are real processing stages, not a loading spinner:
@@ -112,10 +115,13 @@ it. These are real processing stages, not a loading spinner:
 | 6 | `relationship_discovery` | Mine associations across every type combination; rank them. |
 | 7 | `statistical_analysis` | Summary stats, distribution shape, normality; correlation matrix + top pairs. |
 | 8 | `anomaly_detection` | IQR outliers per numeric column + `IsolationForest` on the numeric subspace. |
-| 9 | `chart_generation` | Decide the chart specs the report will render. |
-| 10 | `insight_extraction` | Apply the deterministic rule set → findings + recommendations + headline. |
-| 11 | `excel_report_creation` | Build the 9-sheet workbook with XlsxWriter. |
-| 12 | `final_export` | Upload the `.xlsx` to object storage, write the `reports` row. |
+| 9 | `driver_analysis` | Pick target column(s); fit a shallow decision tree; extract drivers, rules, segment lift. |
+| 10 | `quality_scoring` | Compute the six quality dimensions and the composite score + grade. |
+| 11 | `schema_drift_check` | Fingerprint the schema; diff against the previous run of a same-named file. |
+| 12 | `chart_generation` | Decide the chart specs the report will render. |
+| 13 | `insight_extraction` | Apply the deterministic rule set → findings + recommendations + headline. |
+| 14 | `excel_report_creation` | Build the 12-sheet workbook with XlsxWriter. |
+| 15 | `final_export` | Upload the `.xlsx` to object storage, write the `reports` row. |
 
 ---
 
@@ -126,7 +132,10 @@ hidden gridlines, frozen header rows, autofilters.
 
 | Sheet | Contents |
 |-------|----------|
-| **Executive Dashboard** | KPI cards (rows, columns, cells, missing %, numeric columns, outlier rows), the analysis headline, the top-3 findings, and an embedded column-type-mix bar chart. |
+| **Executive Dashboard** | KPI cards (rows, columns, missing %, quality score, grade, outlier rows), the analysis headline, the top-3 findings, and an embedded column-type-mix bar chart. |
+| **Quality Scorecard** | The composite score + grade, the six weighted dimensions with a red→amber→green scale, and the specific issues dragging the score down. |
+| **Driver Analysis** | Per target: fit metric (R²/accuracy), ranked driver importances with data bars, decision rules with support counts, and a segment-lift table. |
+| **Schema Drift** | The diff vs. the previous run of a same-named file: columns added/removed, type changes, null-rate spikes, row-count delta. |
 | **Dataset Profile** | Every column: role, dtype, non-null count, null % (with data-bar formatting), unique count, sample values. Autofiltered, frozen panes. |
 | **Summary Statistics** | For each numeric column: count, mean, std, min, quartiles, median, max, skew, kurtosis, CV, and a normality verdict. |
 | **Correlation Matrix** | Full Pearson matrix with a red–white–blue 3-colour scale, plus the ranked top-10 correlated pairs. |
@@ -281,8 +290,12 @@ docker compose up --build -d
 |---------|-----|
 | Web app | http://localhost:3000 |
 | API (Swagger UI) | http://localhost:8000/docs |
-| MCP endpoint | http://localhost:8000/mcp |
+| MCP endpoint | http://localhost:8000/mcp &nbsp;(also proxied at http://localhost:3000/mcp) |
 | MinIO console | http://localhost:9001 &nbsp;(`minioadmin` / `minioadmin`) |
+
+The web app serves the API under its own origin (`/api/*`, `/mcp/*` are reverse-proxied
+to the API container) so the session cookie is first-party. The API port `:8000` is still
+exposed for direct/tooling access.
 
 ```bash
 docker compose logs -f api        # tail logs
@@ -295,8 +308,8 @@ docker compose down -v            # stop, wipe database + object storage
 ```bash
 cd api
 pip install .
-python -m pytest tests/ -q        # generates a real dataset, runs all 12 steps,
-                                  # asserts a valid 9-sheet .xlsx is produced
+python -m pytest tests/ -q        # generates a real dataset, runs all 15 steps,
+                                  # asserts a valid 12-sheet .xlsx + quality/driver/drift output
 ```
 
 ---
@@ -310,8 +323,9 @@ All configuration is environment variables (see [`.env.example`](.env.example)).
 |----------|---------|---------|
 | `SECRET_KEY` | Signs session JWTs — **must** be set to a long random string | `dev-secret` |
 | `ENV` | `development` / `production` (controls cookie `Secure` flag) | `development` |
-| `WEB_ORIGIN` | Allowed CORS origin for the web app | `http://localhost:3000` |
-| `API_BASE_URL` | Public base URL of the API (used to build the OAuth redirect) | `http://localhost:8000` |
+| `WEB_ORIGIN` | Allowed CORS origin + where login redirects back to | `http://localhost:3000` |
+| `API_BASE_URL` | Public origin users hit (builds the OAuth redirect URI); same as the web origin because the API is proxied under it | `http://localhost:3000` |
+| `API_PROXY_TARGET` | Internal address the web server proxies `/api` + `/mcp` to (build arg) | `http://api:8000` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth credentials | *(empty)* |
 | `DATABASE_URL` | PostgreSQL SQLAlchemy URL | compose default |
 | `REDIS_URL` / `CELERY_BROKER_URL` | Redis connections | compose default |
@@ -321,14 +335,14 @@ All configuration is environment variables (see [`.env.example`](.env.example)).
 | `UPLOAD_MAX_BYTES` | Hard upload size cap | `104857600` (100 MB) |
 | `INLINE_MAX_BYTES` | Files at or below this analyse inline; above → Celery | `5242880` (5 MB) |
 | `RAW_ROWS_CAP` | Max rows written to the report's Raw Data sheet | `5000` |
-| `NEXT_PUBLIC_API_BASE_URL` | API base URL the browser calls | `http://localhost:8000` |
+| `NEXT_PUBLIC_API_BASE_URL` | API base URL the browser calls — empty = same origin (default) | *(empty)* |
 
 ### Setting up Google OAuth
 
 1. [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
    → **Create Credentials → OAuth client ID → Web application**.
 2. **Authorized redirect URI** (exact):
-   `http://localhost:8000/api/auth/google/callback`
+   `http://localhost:3000/api/auth/google/callback`
 3. On the OAuth consent screen, add your Google account under **Test users**
    (or publish the app).
 4. Put the client ID and secret in `.env`, then
@@ -508,13 +522,14 @@ python -m pytest tests/ -q
 ```
 
 `tests/test_engine.py` builds a 500-row synthetic dataset with injected nulls and
-outliers, runs the complete 12-step workflow, and asserts:
+outliers, runs the complete 15-step workflow, and asserts:
 
-- all 12 steps fire, in order;
+- all 15 steps fire, in order;
 - column roles are inferred correctly (`region` → categorical, `order_date` →
   datetime, `revenue` → numeric);
 - outlier findings are produced;
-- the output is a valid `.xlsx` with 9 sheets.
+- the quality scorecard, driver analysis and drift baseline are populated;
+- the output is a valid `.xlsx` with 12 sheets.
 
 No database, Redis or object storage is required for the engine test.
 
@@ -542,12 +557,14 @@ storage for backups. Deploy with `docker compose pull && docker compose up -d`.
 
 ## Implemented vs. planned
 
-**Implemented (this MVP):** Google OAuth + session cookies, upload → object
-storage, inline + Celery analysis paths, the full 12-step pandas/SciPy/sklearn
-workflow, deterministic insight engine, 9-sheet XlsxWriter report, dataset / job
-/ report history, presigned downloads, Redis rate limiting, MCP server with 7
-tools, Next.js dashboard with animated workflow, dark/light theme and
-drag-and-drop upload.
+**Implemented (this MVP):** Google OAuth + first-party session cookies (API proxied
+under the web origin), upload → object storage, inline + Celery analysis paths, the
+full 15-step pandas/SciPy/sklearn workflow, deterministic insight engine, **Data
+Quality Scorecard**, **Driver Analysis**, **Schema Drift Detection**, 12-sheet
+XlsxWriter report, dataset / job / report history, presigned downloads, Redis rate
+limiting, MCP server with 7 tools, Next.js dashboard with animated workflow, a
+right-rail analysis panel, monogram avatar, dark/light theme and drag-and-drop
+upload.
 
 **Planned (specified, not built):** Time-Series / Segment / Pivot-Table Excel
 sheets, per-user MCP API keys, Alembic migrations, in-app chart image previews,
@@ -561,7 +578,7 @@ top of the deterministic one.
 | Symptom | Cause / fix |
 |---------|-------------|
 | Google: `Error 401: invalid_client` / "OAuth client was not found" | `GOOGLE_CLIENT_ID` in `.env` is wrong or has stray characters. Fix it and `docker compose up -d --force-recreate api`. |
-| Google: `redirect_uri_mismatch` | Add `http://localhost:8000/api/auth/google/callback` exactly to the client's Authorized redirect URIs. |
+| Google: `redirect_uri_mismatch` | Add `http://localhost:3000/api/auth/google/callback` exactly to the client's Authorized redirect URIs. |
 | Google: `access_denied` | Add your account as a Test user on the OAuth consent screen. |
 | `api` container exits on boot | Check `docker compose logs api`. Usually a bad `DATABASE_URL` or an unset `SECRET_KEY` isn't fatal but Google vars being malformed can be. |
 | Report download 404 | The job must have `status = succeeded`; check `GET /api/jobs/{id}`. |
