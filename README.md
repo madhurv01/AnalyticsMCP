@@ -27,7 +27,8 @@ premium multi-sheet Excel report.
 
 - [Why this exists](#why-this-exists)
 - [What it actually does](#what-it-actually-does)
-- [The analytics workflow](#the-analytics-workflow-12-steps)
+- [The analytics workflow](#the-analytics-workflow-15-steps)
+- [How the flagship analyses work](#how-the-flagship-analyses-work)
 - [The Excel report](#the-excel-report)
 - [Architecture](#architecture)
 - [Technology stack](#technology-stack)
@@ -122,6 +123,38 @@ it. These are real processing stages, not a loading spinner:
 | 13 | `insight_extraction` | Apply the deterministic rule set → findings + recommendations + headline. |
 | 14 | `excel_report_creation` | Build the 12-sheet workbook with XlsxWriter. |
 | 15 | `final_export` | Upload the `.xlsx` to object storage, write the `reports` row. |
+
+---
+
+## How the flagship analyses work
+
+**Data Quality Scorecard.** Six sub-scores, each on 0–100, combined with fixed weights
+(completeness 0.28, validity 0.22, uniqueness 0.14, consistency 0.14, type confidence 0.12,
+outlier cleanliness 0.10). Completeness is `100 − missing_cell_%`. Uniqueness is
+`100 × (1 − duplicate_rows / rows)`. Validity and consistency are measured against the *raw*
+pre-clean frame: validity is the mean share of values in typed columns that actually parse
+(so `"n/a"` in a numeric column costs points), consistency is how much a categorical column's
+distinct-value count shrinks after trimming and lower-casing (so `Acme` / `ACME, Inc.`
+variants cost points). Type confidence is the mean parse-success ratio behind each inferred
+role. The composite maps to A–F, and the three weakest dimensions are surfaced with the
+exact rows/columns responsible.
+
+**Driver Analysis.** Targets are auto-ranked by name hints (`revenue`, `churn`, `nps`, …)
+plus coefficient of variation; the top one or two are modelled. Features are built by
+one-hot encoding the top-8 categories per categorical column, passing numerics through, and
+converting datetimes to integer timestamps. A depth-3 `DecisionTree{Regressor,Classifier}`
+(sampled to 25k rows) yields Gini feature importances, and every root-to-leaf path is walked
+into a plain-English rule (`margin ≤ 941 AND channel = Online → mean 1666`) with its support
+count. Separately, each categorical value's group mean is compared to the overall mean to
+produce a ranked **segment-lift** table.
+
+**Schema Drift Detection.** After cleaning, the engine writes a fingerprint into
+`profile_json.schema_fingerprint` — per-column role, dtype and null-rate plus row/column
+counts. On the next analysis of a file with the same name, `jobs.py` loads the previous
+successful job's fingerprint and diffs it: removed columns or role changes are `critical`,
+new columns / null-rate jumps ≥ 15 pp / row-count swings ≥ 40 % are `warning`, everything
+else is `info`. The verdict shows up in the headline, the findings list, the right-rail
+card, and its own Excel sheet.
 
 ---
 
