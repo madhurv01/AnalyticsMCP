@@ -443,6 +443,38 @@ endpoint, or set it as the `if_session` cookie for the web app.
 result table. It calls the exact same sandboxed `run_query` an agent uses over
 MCP — allow-listed methods only.
 
+### Connecting a real-world MCP data source
+
+The hub speaks **Streamable HTTP** and imports any tool/resource whose response is
+JSON rows, `{columns, rows}`, `{items|data|results|...: [...]}`, a markdown table,
+or CSV. The bundled `sample-mcp` works with no setup; for a real source:
+
+**GitHub (recommended — hosted, tabular).**
+1. Create a fine-grained PAT at <https://github.com/settings/personal-access-tokens>
+   (read-only, repo scope is enough).
+2. **Data sources → Connect an MCP server**
+   * URL: `https://api.githubcopilot.com/mcp/`
+   * Bearer token: your PAT
+3. Expand a tool and edit its **Arguments (JSON)**, then **Import & analyze**:
+   * `list_commits` → `{"owner": "you", "repo": "your-repo", "perPage": 100}` —
+     analyze commit cadence, authors, message length.
+   * `list_pull_requests` → `{"owner": "you", "repo": "your-repo", "state": "closed", "perPage": 100}`
+     — merge times, review counts.
+   * `search_repositories` → `{"query": "topic:mcp stars:>100", "perPage": 50}`.
+
+**Hugging Face** (`https://huggingface.co/mcp`, no auth) and **DeepWiki**
+(`https://mcp.deepwiki.com/mcp`, no auth) connect fine but return prose, not tables,
+so most of their tools won't import.
+
+**Any stdio MCP server** (Postgres, filesystem, Notion, …) can be bridged to HTTP
+with [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) or
+[`supergateway`](https://github.com/supercorp-ai/supergateway), then added by its
+proxy URL.
+
+> The connecting request is made **from the API container**, so use a
+> container-reachable URL (`http://sample-mcp:9100/mcp`) or a public one. Tokens are
+> stored Fernet-encrypted.
+
 ### 2. REST API
 
 Interactive docs at `/docs`. Core flow:

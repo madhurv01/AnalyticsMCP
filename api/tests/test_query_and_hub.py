@@ -60,6 +60,23 @@ def test_hub_parses_csv_text():
     assert df.shape == (2, 3)
 
 
+def test_hub_parses_github_style_items():
+    df = to_dataframe('{"total_count": 2, "items": [{"name": "a", "owner": {"login": "x"}}, '
+                      '{"name": "b", "owner": {"login": "y"}}]}')
+    assert df.shape == (2, 2) and "owner.login" in df.columns
+
+
+def test_hub_parses_markdown_table():
+    md = "Results:\n\n| repo | stars |\n|------|-------|\n| a | 12 |\n| b | 7 |\n\ndone"
+    df = to_dataframe(md)
+    assert list(df.columns) == ["repo", "stars"] and len(df) == 2
+
+
+def test_hub_strips_json_fence():
+    df = to_dataframe('```json\n[{"a": 1}, {"a": 2}]\n```')
+    assert len(df) == 2
+
+
 def test_hub_rejects_garbage():
     with pytest.raises(ValueError):
-        to_dataframe("not a table at all")
+        to_dataframe("not a table at all, just prose about something")

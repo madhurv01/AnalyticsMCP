@@ -14,6 +14,8 @@ export function DataSources({ onImported }: { onImported: (datasetId: string) =>
   const [err, setErr] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
+  const [selectedTool, setSelectedTool] = useState<string | null>(null);
+  const [argsText, setArgsText] = useState("{}");
 
   const load = useCallback(() => {
     api.connections().then(setConns).catch(() => {});
@@ -51,20 +53,42 @@ export function DataSources({ onImported }: { onImported: (datasetId: string) =>
     }
   }
 
-  async function runImport(connId: string, toolName: string, schema: any) {
+  function selectTool(toolName: string, schema: any) {
+    // seed the args editor from the tool's JSON schema
+    const args: Record<string, any> = {};
+    const props = schema?.properties ?? {};
+    const required: string[] = schema?.required ?? [];
+    for (const [k, v] of Object.entries<any>(props)) {
+      if (v.default !== undefined) args[k] = v.default;
+      else if (required.includes(k)) {
+        args[k] =
+          v.type === "integer" || v.type === "number" ? 100 : v.type === "boolean" ? false : "";
+      }
+    }
+    setSelectedTool(toolName);
+    setArgsText(JSON.stringify(args, null, 2));
+    setErr(null);
+  }
+
+  async function runImport(connId: string, toolName: string) {
+    let args: any = {};
+    try {
+      args = argsText.trim() ? JSON.parse(argsText) : {};
+    } catch {
+      setErr("arguments must be valid JSON");
+      return;
+    }
     setImporting(toolName);
     setErr(null);
     try {
-      // fill required args with their schema defaults / sensible fallbacks
-      const args: Record<string, any> = {};
-      const props = schema?.properties ?? {};
-      for (const [k, v] of Object.entries<any>(props)) {
-        if (v.default !== undefined) args[k] = v.default;
-        else if (v.type === "integer" || v.type === "number") args[k] = 1000;
-      }
-      const ds = await api.importDataset(connId, { mode: "tool", tool_name: toolName, arguments: args });
+      const ds = await api.importDataset(connId, {
+        mode: "tool",
+        tool_name: toolName,
+        arguments: args,
+      });
       onImported(ds.id);
       setCatalog(null);
+      setSelectedTool(null);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -140,27 +164,63 @@ export function DataSources({ onImported }: { onImported: (datasetId: string) =>
                   {catalog?.connection.id === c.id && (
                     <div className="mt-3 space-y-1.5 border-t pt-3" style={{ borderColor: "var(--border)" }}>
                       <p className="text-xs font-semibold uppercase tracking-wide muted">
-                        Importable tools
+                        Importable tools ({catalog.tools.length})
                       </p>
-                      {catalog.tools.map((t) => (
-                        <button
-                          key={t.name}
-                          onClick={() => runImport(c.id, t.name, t.input_schema)}
-                          disabled={!!importing}
-                          className="flex w-full items-center justify-between gap-2 rounded-lg border p-2 text-left text-xs hover:bg-black/5 dark:hover:bg-white/5"
-                          style={{ borderColor: "var(--border)" }}
-                        >
-                          <span className="min-w-0">
-                            <span className="font-medium">{t.name}</span>
-                            <span className="block truncate muted">{t.description}</span>
-                          </span>
-                          {importing === t.name ? (
-                            <Loader2 size={13} className="shrink-0 animate-spin" />
-                          ) : (
-                            <Download size={13} className="shrink-0 text-brand" />
-                          )}
-                        </button>
-                      ))}
+                      <div className="max-h-64 space-y-1.5 overflow-y-auto scroll-thin">
+                        {catalog.tools.map((t) => (
+                          <div key={t.name}>
+                            <button
+                              onClick={() =>
+                                selectedTool === t.name
+                                  ? setSelectedTool(null)
+                                  : selectTool(t.name, t.input_schema)
+                              }
+                              className={`flex w-full items-center justify-between gap-2 rounded-lg border p-2 text-left text-xs ${
+                                selectedTool === t.name ? "border-brand" : ""
+                              }`}
+                              style={selectedTool === t.name ? {} : { borderColor: "var(--border)" }}
+                            >
+                              <span className="min-w-0">
+                                <span className="font-medium">{t.name}</span>
+                                <span className="block truncate muted">{t.description}</span>
+                              </span>
+                              <ChevronRight
+                                size={13}
+                                className={`shrink-0 transition-transform ${
+                                  selectedTool === t.name ? "rotate-90 text-brand" : "muted"
+                                }`}
+                              />
+                            </button>
+                            {selectedTool === t.name && (
+                              <div className="mt-1.5 space-y-1.5 rounded-lg border p-2"
+                                style={{ borderColor: "var(--border)" }}>
+                                <label className="text-[11px] muted">Arguments (JSON)</label>
+                                <textarea
+                                  value={argsText}
+                                  onChange={(e) => setArgsText(e.target.value)}
+                                  spellCheck={false}
+                                  rows={Math.min(8, argsText.split("\n").length + 1)}
+                                  className="w-full rounded-md border bg-transparent p-2 font-mono text-[11px]"
+                                  style={{ borderColor: "var(--border)" }}
+                                />
+                                <button
+                                  className="btn-primary w-full !py-1.5 text-xs"
+                                  disabled={!!importing}
+                                  onClick={() => runImport(c.id, t.name)}
+                                >
+                                  {importing === t.name ? (
+                                    <Loader2 size={13} className="animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Download size={13} /> Import &amp; analyze
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                       {catalog.tools.length === 0 && (
                         <p className="text-xs muted">This server exposes no tools.</p>
                       )}
