@@ -7,7 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analytics import query as safe_query
-from app.analytics.engine import _read_csv
 from app.config import settings
 from app.db import get_db
 from app.jobs import execute_job
@@ -169,11 +168,9 @@ def run_query(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    """Run a sandboxed pandas expression over the dataset. `df` is the parsed DataFrame."""
+    """Run a sandboxed pandas expression over the dataset. `df` is the cleaned/typed frame."""
     ds = _owned_dataset(db, user, dataset_id)
-    df = _read_csv(get_bytes(ds.storage_key))
-    df.columns = [str(c).strip() for c in df.columns]
     try:
-        return safe_query.run(df, body.expr)
+        return safe_query.run(safe_query.load_frame(get_bytes(ds.storage_key)), body.expr)
     except safe_query.QueryError as exc:
         raise HTTPException(422, str(exc)) from exc

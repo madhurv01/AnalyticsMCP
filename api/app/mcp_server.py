@@ -15,7 +15,6 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.analytics import query as safe_query
-from app.analytics.engine import _read_csv
 from app.db import SessionLocal
 from app.models import AnalysisJob, Dataset
 from app.security import _decode  # noqa: PLC2701 — internal reuse is intentional
@@ -193,10 +192,8 @@ def run_query(dataset_id: str, expr: str) -> dict:
         if ds is None or ds.user_id != _uid():
             return {"error": "dataset not found"}
         key = ds.storage_key
-    df = _read_csv(get_bytes(key))
-    df.columns = [str(c).strip() for c in df.columns]
     try:
-        return safe_query.run(df, expr)
+        return safe_query.run(safe_query.load_frame(get_bytes(key)), expr)
     except safe_query.QueryError as exc:
         return {"error": str(exc)}
 

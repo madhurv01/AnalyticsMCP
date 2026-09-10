@@ -49,6 +49,19 @@ class QueryError(ValueError):
     pass
 
 
+def load_frame(raw: bytes) -> pd.DataFrame:
+    """Parse + lightly type a dataset's CSV the same way the analysis pipeline does,
+    so Query-console results match the dashboard (numeric columns are numeric, dates
+    are dates). Shared by the REST endpoint and the MCP tool."""
+    from app.analytics import profiling
+    from app.analytics.engine import _read_csv
+
+    df = _read_csv(raw)
+    df.columns = [str(c).strip() for c in df.columns]
+    roles = {c: profiling.infer_role(c, df[c]) for c in df.columns}
+    return profiling.clean_frame(df, roles)
+
+
 def _validate(node: ast.AST) -> None:
     count = 0
     for child in ast.walk(node):

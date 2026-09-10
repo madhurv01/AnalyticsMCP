@@ -156,7 +156,7 @@ export default function Dashboard() {
                     )}
                     <InsightsPanel job={job} />
                     {drivers && <DriverPanel drivers={drivers} />}
-                    <QueryConsole datasetId={job.dataset_id} />
+                    <QueryConsole datasetId={job.dataset_id} profile={job.profile_json} />
                   </>
                 )}
               </motion.div>

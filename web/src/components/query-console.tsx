@@ -5,11 +5,22 @@ import { motion } from "framer-motion";
 import { Terminal, Play, Loader2 } from "lucide-react";
 import { api, type QueryResult } from "@/lib/api";
 
-const EXAMPLES = [
-  "df.describe()",
-  "df.groupby('region')['revenue_usd'].mean().sort_values(ascending=False)",
-  "df[df['units'] > 5]['segment'].value_counts()",
-];
+function buildExamples(profile: any): string[] {
+  const cols: any[] = profile?.columns ?? [];
+  const num = cols.filter((c) => c.role === "numeric").map((c) => c.name);
+  const cat = cols
+    .filter((c) => c.role === "categorical" || c.role === "boolean")
+    .map((c) => c.name);
+  const q = (s: string) => `'${String(s).replace(/'/g, "\\'")}'`;
+  const out = ["df.describe()"];
+
+  if (cat[0] && num[0])
+    out.push(`df.groupby(${q(cat[0])})[${q(num[0])}].mean().sort_values(ascending=False)`);
+  if (cat[0]) out.push(`df[${q(cat[0])}].value_counts()`);
+  if (num[0] && num[1]) out.push(`df[[${q(num[0])}, ${q(num[1])}]].corr()`);
+  if (num[0] && !cat[0]) out.push(`df[${q(num[0])}].describe()`);
+  return out.slice(0, 4);
+}
 
 function ResultView({ r }: { r: QueryResult }) {
   if (r.error) return <p className="text-sm text-rose-500">{r.error}</p>;
@@ -67,8 +78,15 @@ function ResultView({ r }: { r: QueryResult }) {
   return <p className="text-sm font-mono">{String(r.value)}</p>;
 }
 
-export function QueryConsole({ datasetId }: { datasetId: string }) {
-  const [expr, setExpr] = useState(EXAMPLES[1]);
+export function QueryConsole({
+  datasetId,
+  profile,
+}: {
+  datasetId: string;
+  profile?: any;
+}) {
+  const examples = buildExamples(profile);
+  const [expr, setExpr] = useState(examples[1] ?? examples[0]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -109,7 +127,7 @@ export function QueryConsole({ datasetId }: { datasetId: string }) {
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {EXAMPLES.map((ex) => (
+        {examples.map((ex) => (
           <button
             key={ex}
             onClick={() => setExpr(ex)}
