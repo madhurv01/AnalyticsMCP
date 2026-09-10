@@ -10,6 +10,8 @@ import { WorkflowAnimation } from "@/components/workflow-animation";
 import { InsightsPanel } from "@/components/insights-panel";
 import { DriverPanel } from "@/components/driver-panel";
 import { RightRail } from "@/components/right-rail";
+import { DataSources } from "@/components/data-sources";
+import { QueryConsole } from "@/components/query-console";
 import { bytes } from "@/lib/utils";
 
 export default function Dashboard() {
@@ -96,6 +98,18 @@ export default function Dashboard() {
         <div className="space-y-6">
           <UploadDropzone onFile={onFile} busy={busy} />
 
+          <DataSources
+            onImported={async (id) => {
+              setError(null);
+              await refresh();
+              try {
+                await track(await api.analyze(id));
+              } catch (e: any) {
+                setError(e.message);
+              }
+            }}
+          />
+
           {error && (
             <p className="rounded-xl bg-rose-500/10 p-3 text-sm text-rose-500">{error}</p>
           )}
@@ -142,6 +156,7 @@ export default function Dashboard() {
                     )}
                     <InsightsPanel job={job} />
                     {drivers && <DriverPanel drivers={drivers} />}
+                    <QueryConsole datasetId={job.dataset_id} />
                   </>
                 )}
               </motion.div>

@@ -94,6 +94,8 @@ the file you uploaded.
 | **Data Quality Scorecard** | A single 0–100 score + letter grade, built from six weighted dimensions (completeness, uniqueness, validity, consistency, outlier cleanliness, type-inference confidence) with the specific issues dragging each one down. |
 | **Driver Analysis** | Auto-picks the most interesting target column(s), then explains what moves them: shallow decision-tree feature importances, human-readable split rules, and categorical **segment lift** ("Enterprise customers: +232% on margin"). |
 | **Schema Drift Detection** | Fingerprints every analysed schema. Re-analyse a file with the same name and the run is diffed against the last one — added/removed columns, type changes, null-rate spikes, row-count deltas — with a severity. Turns a one-off tool into a monitoring tool. |
+| **Data-source hub (InsightForge as an MCP *client*)** | Register an external MCP server, browse its tools, and pull a table straight into the pipeline — no CSV export. The platform is now both ends of MCP: it **exposes** an analytics MCP server *and* **consumes** data-source MCP servers. Responses are parsed as JSON rows, `{columns, rows}`, or CSV. |
+| **`run_query` — sandboxed query tool** | An MCP tool (and REST endpoint) that runs a short pandas expression over `df` and returns a small result table. The expression is AST-validated against an allow-list — no imports, no dunders, no arbitrary callables — so an agent (or the in-app console) can ask anything without a code-execution risk. |
 | **Premium Excel export** | 12 professionally formatted sheets: KPI cards, conditional formatting, data bars, 3-colour scales, frozen panes, autofilters, embedded charts, branded palette. |
 | **History & report management** | Every upload, job and report is persisted per user and listed in the dashboard; reports download via short-lived presigned URLs. |
 | **Background processing** | Files under 5 MB analyse inline in the request; larger files are handed to a Celery worker and the UI polls live progress. |
@@ -155,6 +157,19 @@ successful job's fingerprint and diffs it: removed columns or role changes are `
 new columns / null-rate jumps ≥ 15 pp / row-count swings ≥ 40 % are `warning`, everything
 else is `info`. The verdict shows up in the headline, the findings list, the right-rail
 card, and its own Excel sheet.
+
+**Data-source hub + `run_query`.** InsightForge is an MCP *client* as well as a server.
+`POST /api/connections` opens a Streamable-HTTP session to the given URL, runs
+`initialize` + `tools/list` + `resources/list`, and stores the connection (bearer token
+Fernet-encrypted). `POST /api/connections/{id}/import` calls a chosen tool (or reads a
+resource), then `mcpclient.to_dataframe` coerces the text response — JSON list-of-objects,
+`{columns, rows}`, `{data|rows|records|result: [...]}`, or CSV/TSV — into a DataFrame,
+writes it as a CSV dataset, and the normal pipeline takes over. The bundled `sample-mcp`
+service is a real MCP server exposing `get_sales` / `get_regions_summary` so the hub works
+out of the box. `run_query` parses the expression to an AST, rejects any node outside a
+fixed allow-list (no `Import`, no `_`-prefixed attributes, only `df` / `pd` / `np` names,
+only ~60 whitelisted pandas methods), then `eval`s it with `__builtins__` stripped and the
+input capped at 300k rows; the result is serialised to a small JSON table.
 
 ---
 
@@ -253,21 +268,31 @@ in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 │   │   ├── storage.py         # S3 / MinIO helpers (put, get, delete, presign)
 │   │   ├── jobs.py            # execute_job() — shared by request path & worker
 │   │   ├── worker.py          # Celery app + analyze_dataset task
-│   │   ├── mcp_server.py      # 7 MCP tools + bearer-auth middleware
+│   │   ├── mcp_server.py      # 8 MCP tools + bearer-auth middleware
+│   │   ├── mcpclient.py       # InsightForge as an MCP client (probe / fetch / parse)
+│   │   ├── crypto.py          # Fernet encryption for stored data-source tokens
 │   │   ├── routers/
 │   │   │   ├── auth.py        # Google login / callback / me / logout
-│   │   │   ├── datasets.py    # upload, list, get, delete, analyze, jobs
-│   │   │   └── reports.py     # list, download (presigned), delete
+│   │   │   ├── datasets.py    # upload, list, get, delete, analyze, jobs, query
+│   │   │   ├── reports.py     # list, download (presigned), delete
+│   │   │   └── connections.py # MCP data-source hub — register / catalog / import
+│   │   ├── examples/
+│   │   │   └── sample_mcp_server.py   # bundled demo MCP "data warehouse"
 │   │   └── analytics/
-│   │       ├── engine.py          # run_workflow() orchestrator
+│   │       ├── engine.py          # run_workflow() orchestrator (15 steps)
 │   │       ├── profiling.py       # role inference, cleaning, profile
 │   │       ├── stats.py           # summary stats, correlation
 │   │       ├── relationships.py   # cross-type association discovery
 │   │       ├── outliers.py        # IQR + IsolationForest
+│   │       ├── quality.py         # Data Quality Scorecard
+│   │       ├── drivers.py         # Driver Analysis (tree + rules + segment lift)
+│   │       ├── drift.py           # Schema Drift Detection
+│   │       ├── query.py           # run_query — AST-sandboxed pandas evaluator
 │   │       ├── insights.py        # deterministic rule engine
-│   │       └── excel.py           # XlsxWriter report builder
+│   │       └── excel.py           # XlsxWriter report builder (12 sheets)
 │   ├── tests/
-│   │   └── test_engine.py     # real end-to-end engine test (no infra needed)
+│   │   ├── test_engine.py            # real end-to-end engine test (no infra)
+│   │   └── test_query_and_hub.py     # run_query sandbox + hub response parsing
 │   └── sample_data/
 │       ├── orders.csv                 # tiny dirty sample
 │       ├── insightforge_test_50k.csv  # 50k-row feature-exercising dataset
@@ -324,6 +349,7 @@ docker compose up --build -d
 | Web app | http://localhost:3000 |
 | API (Swagger UI) | http://localhost:8000/docs |
 | MCP endpoint | http://localhost:8000/mcp &nbsp;(also proxied at http://localhost:3000/mcp) |
+| Sample MCP data source | http://localhost:9100/mcp &nbsp;(the `sample-mcp` demo warehouse) |
 | MinIO console | http://localhost:9001 &nbsp;(`minioadmin` / `minioadmin`) |
 
 The web app serves the API under its own origin (`/api/*`, `/mcp/*` are reverse-proxied
@@ -402,12 +428,20 @@ endpoint, or set it as the `if_session` cookie for the web app.
 ### 1. Web app
 
 1. Sign in with Google.
-2. Drag a `.csv` onto the dropzone (or click to browse).
-3. Watch the 12-step workflow animate with live progress.
-4. When it finishes: KPI cards, the headline, severity-coded findings and
-   recommendations render in the dashboard, and the Excel report is one click away.
-5. Every dataset and report stays in the sidebar history — re-run analysis or
-   re-download any time.
+2. Drag a `.csv` onto the dropzone — **or** open **Data sources**, connect an MCP
+   server (try the bundled one: `http://sample-mcp:9100/mcp`), and import a table
+   from one of its tools. Either way you land on the same pipeline.
+3. Watch the 15-step workflow animate with live progress.
+4. When it finishes: the quality gauge, headline, severity-coded findings,
+   Driver Analysis and the **Query console** render in the dashboard, and the
+   12-sheet Excel report is one click away.
+5. Every dataset, report and data source stays in the sidebar — re-run analysis,
+   re-download, or re-import any time.
+
+**Query console.** Once a job is loaded, type a pandas expression over `df`
+(`df.groupby('region')['revenue'].mean().sort_values()`) and get an instant
+result table. It calls the exact same sandboxed `run_query` an agent uses over
+MCP — allow-listed methods only.
 
 ### 2. REST API
 
@@ -448,10 +482,15 @@ curl -sL -H "Authorization: Bearer $TOKEN" $BASE/api/reports/<report_id>/downloa
 | `GET` | `/api/datasets` | list (paginated) |
 | `GET` / `DELETE` | `/api/datasets/{id}` | detail / delete |
 | `POST` | `/api/datasets/{id}/analyze` | start a job |
+| `POST` | `/api/datasets/{id}/query` | run a sandboxed pandas expression, get a result table |
 | `GET` | `/api/jobs` · `/api/jobs/{id}` | job history / status |
 | `GET` | `/api/reports` | report history |
 | `GET` | `/api/reports/{id}/download` | presigned download |
 | `DELETE` | `/api/reports/{id}` | delete a report |
+| `POST` / `GET` | `/api/connections` | register / list MCP data sources |
+| `GET` | `/api/connections/{id}/catalog` | list a source's tools + resources |
+| `POST` | `/api/connections/{id}/import` | pull a table from a tool/resource → new dataset |
+| `DELETE` | `/api/connections/{id}` | remove a data source |
 
 ### 3. MCP server (for LLM clients)
 
@@ -479,6 +518,7 @@ JWT as a bearer token. Example client config:
 | `get_insights` | `job_id` | headline, findings, recommendations |
 | `get_report_url` | `job_id` | 5-minute presigned Excel URL + sheet list |
 | `summarize_column` | `job_id`, `column` | computed stats / profile for one column |
+| `run_query` | `dataset_id`, `expr` | run a sandboxed pandas expression → result table |
 
 Every tool resolves the bearer token to a user and filters strictly by that
 user's id — an MCP client can never see another user's data.
@@ -499,6 +539,8 @@ removed in one statement.
   timestamps).
 - **`reports`** — one row per generated workbook (`storage_key`, `size_bytes`,
   `sheet_names`).
+- **`mcp_connections`** — one row per registered data source (`name`, `url`,
+  `auth_token_enc` — Fernet-encrypted with a `SECRET_KEY`-derived key).
 
 The MVP creates tables with SQLAlchemy `create_all` on startup. Production should
 switch to Alembic migrations. Full DDL is in
@@ -593,11 +635,13 @@ storage for backups. Deploy with `docker compose pull && docker compose up -d`.
 **Implemented (this MVP):** Google OAuth + first-party session cookies (API proxied
 under the web origin), upload → object storage, inline + Celery analysis paths, the
 full 15-step pandas/SciPy/sklearn workflow, deterministic insight engine, **Data
-Quality Scorecard**, **Driver Analysis**, **Schema Drift Detection**, 12-sheet
-XlsxWriter report, dataset / job / report history, presigned downloads, Redis rate
-limiting, MCP server with 7 tools, Next.js dashboard with animated workflow, a
-right-rail analysis panel, monogram avatar, dark/light theme and drag-and-drop
-upload.
+Quality Scorecard**, **Driver Analysis**, **Schema Drift Detection**,
+**data-source hub** (InsightForge as an MCP client + a bundled `sample-mcp`
+warehouse) and the **`run_query`** sandbox (MCP tool + REST + in-app console),
+12-sheet XlsxWriter report, dataset / job / report / connection history, presigned
+downloads, Redis rate limiting, MCP server with **8 tools**, Next.js dashboard with
+animated workflow, a right-rail analysis panel, monogram avatar, dark/light theme
+and drag-and-drop upload.
 
 **Planned (specified, not built):** Time-Series / Segment / Pivot-Table Excel
 sheets, per-user MCP API keys, Alembic migrations, in-app chart image previews,

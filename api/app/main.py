@@ -7,7 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
 from app.db import init_db
 from app.mcp_server import build_mcp_app
-from app.routers import auth, datasets, reports
+from app.routers import auth, connections, datasets, reports
 
 mcp_app = build_mcp_app()
 
@@ -38,6 +38,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(datasets.router)
 app.include_router(reports.router)
+app.include_router(connections.router)
 
 app.mount("/mcp", mcp_app)
 

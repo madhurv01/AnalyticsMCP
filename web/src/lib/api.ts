@@ -87,4 +87,69 @@ export const api = {
     `${API_BASE}/api/reports/${reportId}/download`,
   deleteReport: (id: string) =>
     req(`/api/reports/${id}`, { method: "DELETE" }),
+
+  // --- data-source hub (InsightForge as an MCP client) ---
+  connections: () => req<Connection[]>("/api/connections"),
+  addConnection: (b: { name: string; url: string; auth_token?: string }) =>
+    req<Catalog>("/api/connections", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(b),
+    }),
+  catalog: (id: string) => req<Catalog>(`/api/connections/${id}/catalog`),
+  deleteConnection: (id: string) =>
+    req(`/api/connections/${id}`, { method: "DELETE" }),
+  importDataset: (
+    id: string,
+    b: { mode?: string; tool_name?: string; arguments?: any; resource_uri?: string },
+  ) =>
+    req<Dataset>(`/api/connections/${id}/import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(b),
+    }),
+
+  // --- sandboxed query ---
+  query: (datasetId: string, expr: string) =>
+    req<QueryResult>(`/api/datasets/${datasetId}/query`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expr }),
+    }),
 };
+
+export interface Connection {
+  id: string;
+  name: string;
+  url: string;
+  server_name: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface McpTool {
+  name: string;
+  description: string;
+  input_schema: any;
+}
+
+export interface Catalog {
+  connection: Connection;
+  tools: McpTool[];
+  resources: { uri: string; name: string; mime_type: string }[];
+}
+
+export interface QueryResult {
+  kind: "table" | "series" | "list" | "scalar";
+  columns?: string[];
+  rows?: Record<string, any>[];
+  name?: string | null;
+  index?: any[];
+  values?: any[];
+  value?: any;
+  row_count?: number;
+  returned?: number;
+  result_truncated?: boolean;
+  input_truncated?: boolean;
+  error?: string;
+}

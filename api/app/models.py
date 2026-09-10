@@ -66,6 +66,21 @@ class AnalysisJob(Base):
     __table_args__ = (Index("ix_jobs_user_created", "user_id", "created_at"),)
 
 
+class McpConnection(Base):
+    __tablename__ = "mcp_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    url: Mapped[str] = mapped_column(String)
+    auth_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    server_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    __table_args__ = (Index("ix_mcp_conn_user", "user_id", "created_at"),)
+
+
 class Report(Base):
     __tablename__ = "reports"
 

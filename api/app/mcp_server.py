@@ -14,10 +14,12 @@ from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.analytics import query as safe_query
+from app.analytics.engine import _read_csv
 from app.db import SessionLocal
 from app.models import AnalysisJob, Dataset
 from app.security import _decode  # noqa: PLC2701 — internal reuse is intentional
-from app.storage import presigned_get
+from app.storage import get_bytes, presigned_get
 
 _current_user_id: "contextvars.ContextVar[Optional[uuid.UUID]]" = contextvars.ContextVar(
     "mcp_user_id", default=None
@@ -172,6 +174,31 @@ def summarize_column(job_id: str, column: str) -> dict:
             if col["name"] == column:
                 return col
         return {"error": "column not found"}
+
+
+@mcp.tool()
+def run_query(dataset_id: str, expr: str) -> dict:
+    """Run a sandboxed pandas expression over a dataset and get a small result table back.
+
+    `df` is the parsed DataFrame. Only a curated allow-list of pandas/Series methods is
+    permitted — no imports, no attribute access starting with `_`, no arbitrary callables.
+
+    Examples:
+      df.groupby('region')['revenue'].mean().sort_values(ascending=False).head(10)
+      df[df['status'] == 'churned']['plan'].value_counts()
+      df[['units','revenue']].corr()
+    """
+    with SessionLocal() as db:
+        ds = db.get(Dataset, uuid.UUID(dataset_id))
+        if ds is None or ds.user_id != _uid():
+            return {"error": "dataset not found"}
+        key = ds.storage_key
+    df = _read_csv(get_bytes(key))
+    df.columns = [str(c).strip() for c in df.columns]
+    try:
+        return safe_query.run(df, expr)
+    except safe_query.QueryError as exc:
+        return {"error": str(exc)}
 
 
 def build_mcp_app():

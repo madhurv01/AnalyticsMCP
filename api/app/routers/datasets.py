@@ -6,14 +6,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.analytics import query as safe_query
+from app.analytics.engine import _read_csv
 from app.config import settings
 from app.db import get_db
 from app.jobs import execute_job
 from app.models import AnalysisJob, Dataset, User
 from app.ratelimit import limit
-from app.schemas import AnalyzeRequest, DatasetOut, JobDetailOut, JobOut, Page
+from app.schemas import AnalyzeRequest, DatasetOut, JobDetailOut, JobOut, Page, QueryRequest
 from app.security import current_user
-from app.storage import delete_key, put_bytes
+from app.storage import delete_key, get_bytes, put_bytes
 
 router = APIRouter(prefix="/api", tags=["datasets"])
 
@@ -158,3 +160,20 @@ def list_jobs(
 @router.get("/jobs/{job_id}", response_model=JobDetailOut)
 def get_job(job_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     return _owned_job(db, user, job_id)
+
+
+@router.post("/datasets/{dataset_id}/query", dependencies=[Depends(limit("read"))])
+def run_query(
+    dataset_id: uuid.UUID,
+    body: QueryRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Run a sandboxed pandas expression over the dataset. `df` is the parsed DataFrame."""
+    ds = _owned_dataset(db, user, dataset_id)
+    df = _read_csv(get_bytes(ds.storage_key))
+    df.columns = [str(c).strip() for c in df.columns]
+    try:
+        return safe_query.run(df, body.expr)
+    except safe_query.QueryError as exc:
+        raise HTTPException(422, str(exc)) from exc

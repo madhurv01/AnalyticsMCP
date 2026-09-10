@@ -129,6 +129,19 @@ CREATE TABLE reports (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_reports_user_created ON reports(user_id, created_at DESC);
+
+-- mcp_connections: external MCP servers registered as data sources
+CREATE TABLE mcp_connections (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name           TEXT NOT NULL,
+  url            TEXT NOT NULL,
+  auth_token_enc TEXT,                      -- Fernet(SECRET_KEY-derived) ciphertext
+  server_name    TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at   TIMESTAMPTZ
+);
+CREATE INDEX ix_mcp_conn_user ON mcp_connections(user_id, created_at DESC);
 ```
 
 The MVP uses SQLAlchemy `create_all` on startup. Production: swap to Alembic migrations
@@ -155,6 +168,11 @@ All routes require a valid `if_session` cookie except the auth handshake and hea
 | GET  | `/api/reports` | report history |
 | GET  | `/api/reports/{id}/download` | 302 → presigned MinIO URL (TTL 300s) |
 | DELETE | `/api/reports/{id}` | delete report artifact |
+| POST | `/api/datasets/{id}/query` | run a sandboxed pandas expression, return a result table |
+| POST / GET | `/api/connections` | register / list external MCP data sources |
+| GET  | `/api/connections/{id}/catalog` | list that source's tools + resources |
+| POST | `/api/connections/{id}/import` | pull a table from a tool/resource → new dataset |
+| DELETE | `/api/connections/{id}` | remove a data source |
 
 Errors: RFC-7807-ish JSON `{ "detail": "...", "code": "..." }`. Validation → 422.
 Rate-limited → 429 with `Retry-After`.
@@ -173,8 +191,17 @@ or a per-user API key (`mcp_keys` table — planned). Tools operate only on the 
 | `get_insights` | `job_id` | deterministic insights + recommendations |
 | `get_report_url` | `job_id` | presigned Excel download URL |
 | `summarize_column` | `dataset_id, column` | stats / value counts for one column |
+| `run_query` | `dataset_id, expr` | AST-sandboxed pandas expression → result table |
 
 Resources: `insightforge://datasets/{id}/profile`, `insightforge://jobs/{id}/insights`.
+
+**InsightForge as an MCP client.** The same service also *consumes* MCP servers. A user
+registers a data-source server (`mcp_connections`); `app/mcpclient.py` opens a
+Streamable-HTTP `ClientSession`, lists its tools/resources, calls one, and
+`to_dataframe()` coerces the JSON/CSV response into a table that enters the normal
+pipeline. `app/examples/sample_mcp_server.py` (compose service `sample-mcp`, port 9100)
+is a working demo source. So MCP is the interface on both ends: agents call InsightForge,
+InsightForge calls data sources.
 
 ## 6. Analytics workflow
 
@@ -281,9 +308,13 @@ pandas/scipy/sklearn workflow (15 steps), deterministic insights, **Data Quality
 Scorecard** (`analytics/quality.py`), **Driver Analysis** (`analytics/drivers.py` —
 decision-tree drivers + rules + segment lift), **Schema Drift Detection**
 (`analytics/drift.py` — fingerprint diff vs. the previous run of a same-named file),
-12-sheet XlsxWriter report, dataset/job/report history, presigned downloads, Redis
-rate limiting, MCP server with 7 tools, Next.js dashboard with animated workflow,
-right-rail analysis panel + quality gauge, monogram avatar, dark/light + drag-drop.
+**data-source hub** (`mcpclient.py` + `routers/connections.py` + `examples/
+sample_mcp_server.py` — InsightForge as an MCP client), **`run_query`**
+(`analytics/query.py` — AST-sandboxed pandas, exposed as an MCP tool + REST + in-app
+console), 12-sheet XlsxWriter report, dataset/job/report/connection history, presigned
+downloads, Redis rate limiting, MCP server with 8 tools, Next.js dashboard with animated
+workflow, right-rail analysis panel + quality gauge, monogram avatar, dark/light +
+drag-drop.
 
 **Planned (specified, not built):** Time-Series / Pivot Excel sheets, per-user MCP
 API keys, Alembic migrations, chart image previews in-app (currently spec-only chart

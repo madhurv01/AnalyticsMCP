@@ -55,6 +55,39 @@ class AnalyzeRequest(BaseModel):
     force_async: bool = False
 
 
+class ConnectionCreate(BaseModel):
+    name: str
+    url: str
+    auth_token: str | None = None
+
+
+class ConnectionOut(ORMModel):
+    id: uuid.UUID
+    name: str
+    url: str
+    server_name: str | None
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+class CatalogOut(BaseModel):
+    connection: ConnectionOut
+    tools: list
+    resources: list
+
+
+class ImportRequest(BaseModel):
+    mode: str = "tool"  # "tool" | "resource"
+    tool_name: str | None = None
+    arguments: dict | None = None
+    resource_uri: str | None = None
+    filename: str | None = None
+
+
+class QueryRequest(BaseModel):
+    expr: str
+
+
 class Page(BaseModel):
     items: list
     total: int
